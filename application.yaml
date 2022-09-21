@@ -1,0 +1,54 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: scrum-board-master
+spec:
+  components:
+    - name: postgres
+      type: postgres-component
+      properties:
+        storage_size: 10
+        instance_tier: small
+        db_admin_username: scrum
+        db_admin_password: cG9zdGdyZXMK
+        region: europe
+        db_name: scrum
+        vpc_ref: vela-vpc
+        writeConnectionSecretToRef:
+          name: db-conn
+          namespace: default
+    - name: scrum-ui
+      type: frontend
+      dependsOn:
+        - scrum-app
+      properties:
+        name: scrum-ui
+        image: 'alessiovnt/scrum-ui:latest'
+        port: 4200
+        targetPort: 80
+    - name: scrum-app
+      type: backend
+      dependsOn:
+        - postgres
+      properties:
+        name: scrum-app
+        image: 'alessiovnt/scrum-app:latest'
+        env:
+          - name: DB_SERVER
+            valueFrom:
+              secretKeyRef:
+                name: db-conn
+                key: db_endpoint
+          - name: POSTGRES_DB
+            valueFrom:
+              secretKeyRef:
+                name: db-conn
+                key: db_name
+          - name: POSTGRES_USER
+            value: scrum
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: db-conn
+                key: db_password
+        port: 8080

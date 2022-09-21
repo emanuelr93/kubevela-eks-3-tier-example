@@ -1,0 +1,204 @@
+apiVersion: core.oam.dev/v1alpha2
+kind: ComponentDefinition
+metadata:
+  name: postgres-component
+  annotations:
+    definition.oam.dev/description: Terraform configuration for AWS RDS object
+    type: terraform
+spec:
+  workload:
+    definition:
+      apiVersion: terraform.core.oam.dev/v1beta1
+      kind: Configuration
+  schematic:
+    terraform:
+      configuration: |
+        terraform {
+          required_providers {
+            aws = {
+              source = "hashicorp/aws"
+              version = "3.62.0"
+            }
+          }
+        }
+
+        provider "aws" {
+            region = local.region_map[var.region]
+        }
+
+        locals {
+
+          region_map = {
+            europe = "eu-south-1"
+            us = "us-east-1"
+          }
+
+          tier_map = {
+            small = "db.t3.micro"
+            medium = "db.t3.medium"
+            large = "db.t3.large"
+          }
+
+
+        }
+
+        data "aws_vpc" "vpc_data" {
+          //id = var.vpc_id
+          filter {
+                name   = "tag:name"
+                values = ["${var.vpc_ref}"]
+            }
+        }
+
+        data "aws_subnet_ids" "private_subnets" {
+            vpc_id = data.aws_vpc.vpc_data.id
+
+            filter {
+                name   = "tag:tier"
+                values = ["private"]
+            }
+        }
+
+        resource "aws_security_group" "rds_security_group" {
+          name        = "terraform_rds_security_group"
+          description = "Security group for rds instance"
+          vpc_id      = "${data.aws_vpc.vpc_data.id}"
+          # Keep the instance private by only allowing traffic from the web server.
+          ingress {
+            from_port       = 5432
+            to_port         = 5432
+            protocol        = "tcp"
+            cidr_blocks      = ["${data.aws_vpc.vpc_data.cidr_block}"]
+          }
+          # Allow all outbound traffic.
+          egress {
+            from_port   = 0
+            to_port     = 0
+            protocol    = "-1"
+            cidr_blocks = ["0.0.0.0/0"]
+          }
+          tags = {
+            name = "terraform-example-rds-security-group"
+          }
+        }
+
+        resource "aws_db_subnet_group" "rds_subnet_group" {
+          name       = "main"
+          subnet_ids = data.aws_subnet_ids.private_subnets.ids
+        }
+
+        resource "aws_db_instance" "default_aws_db_instance_v1" {
+
+            #Optional, number of instances
+            count = var.units
+
+            #Optional, The name of the database to create when the DB instance is created.
+            #If this parameter is not specified, no database is created in the DB instance.
+            name = var.units == 1 ? "${var.db_name}" : "${var.db_name}_${count.index}"
+
+            #Required unless a snapshot_identifier or replicate_source_db is provided.
+            allocated_storage = var.storage_size
+
+            #Static for this component
+            engine = "postgres"
+
+            #Optional, The engine version to use.
+            engine_version = var.engine_version
+
+            #Required, The instance type of the RDS instance.
+            instance_class = local.tier_map[var.instance_tier]
+
+            #RDS instance subnet group.
+            db_subnet_group_name = aws_db_subnet_group.rds_subnet_group.name
+
+            # Required unless a snapshot_identifier or replicate_source_db is provided.
+            # Username for the master DB user.
+            username = var.db_admin_username
+
+            #Password for the master DB user
+            password = var.db_admin_password
+
+            #(Optional) Determines whether a final DB snapshot is created before the DB instance is deleted. If true is specified, no DBSnapshot is created. If false is specified, a DB snapshot is created before the DB instance is deleted, using the value from final_snapshot_identifier. Default is false.
+            skip_final_snapshot  = var.skip_final_snapshot
+
+            #(Optional) The name of your final DB snapshot when this DB instance is deleted. Must be provided if skip_final_snapshot is set to false. The value must begin with a letter, only contain alphanumeric characters and hyphens, and not end with a hyphen or contain two consecutive hyphens. Must not be provided when deleting a read replica.
+            final_snapshot_identifier = "${var.db_name}-${count.index}-snapshot"
+
+            vpc_security_group_ids = ["${aws_security_group.rds_security_group.id}"]
+        }
+
+        variable vpc_ref {
+            type = string
+            description = "Tag of the vpc"
+        }
+
+
+        variable storage_size {
+            type        = number
+            default     = 10
+            description = "Storage capacity"
+        }
+
+        variable instance_tier {
+            type        = string
+            default     = "small"
+            description = "Type of instance to use"
+        }
+
+        variable db_admin_username {
+            type        = string
+            default     = "foo"
+            description = "Username to access to the database"
+        }
+
+        variable db_admin_password {
+            type        = string
+            default     = "YourPwdShouldBeLongAndSecure!"
+            description = "Password to access to the database"
+        }
+
+        variable region {
+            type        = string
+            default     = "europe"
+            description = "Place where to deploy the database"
+        }
+
+        variable db_name {
+            type        = string
+            default     = "mydb"
+            description = "Name of the database"
+        }
+
+        variable engine_version {
+            type        = string
+            default     = "9.6"
+            description = "Engine versione of the database"
+        }
+
+        variable units {
+            description = "Number of instances"
+            type        = number
+            default     = 1
+        }
+
+        variable skip_final_snapshot {
+          type        = bool
+          default     = true
+        }
+
+        output db_endpoint {
+          value = aws_db_instance.default_aws_db_instance_v1[0].endpoint
+        }
+
+        output db_name {
+            value = aws_db_instance.default_aws_db_instance_v1[0].name
+        }
+
+        output db_password {
+            value = aws_db_instance.default_aws_db_instance_v1[0].password
+            sensitive = true
+        }
+
+      providerRef:
+              name: aws
+              namespace: default
