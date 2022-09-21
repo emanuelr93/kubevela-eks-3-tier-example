@@ -6,14 +6,20 @@ The purpose of this project is to demostrate the functionalities of Kubevela.
 
 1. Apply Component
 
+'''
 vela def apply frontend.cue
 vela def apply backend.cue
 kubectl apply -f postgres-component.yaml
+'''
 
 2. Deploy application
 
+'''
 vela up -f application.yaml
+'''
 
 3. Verify Deploy of Application
 
+'''
 vela status scrum-board-master
+'''
